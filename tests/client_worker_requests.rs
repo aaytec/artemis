@@ -33,25 +33,28 @@ async fn test_worker2() -> Result<(), Error> {
 
     let query: Box<str> = "query { bookById(id: \"book-1\") { id name pageCount author { id firstName lastName } } }".into();
     println!("{}", query);
-    client.send(ClientEvent::Start(artemis::Start::new("1", query)))
+    client.send(ClientEvent::Subscribe(artemis::Subscribe::new("1", query)))
         .await
         .expect("failed to send start message");
 
-    let mut data_res: Option<artemis::Data> = None;
+    let mut data_res: Option<artemis::Next> = None;
     while let Ok(next_res) = client.next().await {
         if let Some(next_msg) = next_res {
             match next_msg {
                 ServerEvent::ConnectionAck => {},
-                ServerEvent::ConnectionError => {
-                    println!("got Connection Error, closing connection");
-                    client.close().await?
+                ServerEvent::Ping => {
+                    println!("got Ping, sending Pong");
+                    client.send(ClientEvent::Pong).await?
                 },
-                ServerEvent::Data(data) => {
+                ServerEvent::Pong => {
+                    println!("got Pong");
+                    continue;
+                },
+                ServerEvent::Next(data) => {
                     if (*data.id).eq("1") {
                         data_res = Some(data);
                     }
                 },
-                ServerEvent::KeepAlive => {},
                 ServerEvent::Error(error) => {
 
                     if let Some(id) = error.id {
@@ -80,12 +83,12 @@ async fn _worker(client: &mut Client) -> Result<(), Error> {
     let query: Box<str> = "query { bookById(id: \"book-1\") { id name pageCount author { id firstName lastName } } }".into();
     let query_id = "1";
     println!("{}", query);
-    client.send(ClientEvent::Start(artemis::Start::new(query_id, query)))
+    client.send(ClientEvent::Subscribe(artemis::Subscribe::new(query_id, query)))
         .await
         .expect("failed to send start message");
 
     client.listen(
-        |_data: artemis::Data| {
+        |_data: artemis::Next| {
 
             async move {
                 // println!("Got Data for {}, payload data: {:?}", data.id, data.payload.data);

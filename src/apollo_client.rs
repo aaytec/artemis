@@ -1,64 +1,64 @@
 use std::fmt::Error;
 use futures_util::{SinkExt, StreamExt, Future};
 use websocket_lite::{AsyncClient, AsyncNetworkStream, ClientBuilder, Message};
-use crate::{event::{build_client_message, GraphqlWsClientEvent, GraphqlWsComplete, GraphqlWsNext, GraphqlWsError, GraphqlWsServerEvent}, GraphqlWsProtocol};
+use crate::{apollo_event::{build_client_message, ApolloGraphqlWsClientEvent, ApolloGraphqlWsComplete, ApolloGraphqlWsData, ApolloGraphqlWsError, ApolloGraphqlWsServerEvent}, GraphqlWsProtocol};
 
 
-pub struct GraphqlWsClientBuilder {
+pub struct ApolloGraphqlWsClientBuilder {
     url: Box<str>
 }
 
-impl GraphqlWsClientBuilder {
+impl ApolloGraphqlWsClientBuilder {
 
-    pub fn from_url(url: &str) -> GraphqlWsClientBuilder {
+    pub fn from_url(url: &str) -> ApolloGraphqlWsClientBuilder {
 
-        GraphqlWsClientBuilder {
+        ApolloGraphqlWsClientBuilder {
             url: Box::from(url),
         }
     }
 
-    pub fn from(ws_proto: &str, host: &str, port: u16, path: &str) -> GraphqlWsClientBuilder {
+    pub fn from(ws_proto: &str, host: &str, port: u16, path: &str) -> ApolloGraphqlWsClientBuilder {
 
-        GraphqlWsClientBuilder {
+        ApolloGraphqlWsClientBuilder {
             url: Box::from(format!("{}://{}:{}{}", ws_proto, host, port, path).as_str()),
         }
     }
 
-    pub async fn connect(&self) -> Result<GraphqlWsClient, Error> {
+    pub async fn connect(&self) -> Result<ApolloGraphqlWsClient, Error> {
         let mut builder = ClientBuilder::new(self.url.as_ref())
             .expect("failed to parse url");
 
-        builder.add_header("Sec-WebSocket-Protocol".into(), GraphqlWsProtocol::OFFICIAL.get_ws_sec_protocol().into());
+        builder.add_header("Sec-WebSocket-Protocol".into(), GraphqlWsProtocol::APOLLO.get_ws_sec_protocol().into());
 
         let stream = builder
             .async_connect()
             .await
             .expect("failed to connect");
 
-        let mut client = GraphqlWsClient {
+        let mut client = ApolloGraphqlWsClient {
             stream
         };
 
-        client.send(GraphqlWsClientEvent::ConnectionInit).await?;
+        client.send(ApolloGraphqlWsClientEvent::ConnectionInit).await?;
         client.wait_connection_ack().await?;
         Ok(client)
     }
 }
 
 
-pub struct GraphqlWsClient {
+pub struct ApolloGraphqlWsClient {
 
     stream: AsyncClient<Box<dyn AsyncNetworkStream + Sync + Send + Unpin + 'static>>,
 
 }
 
-impl GraphqlWsClient {
+impl ApolloGraphqlWsClient {
 
     pub fn get_protocol(&self) -> GraphqlWsProtocol {
-        GraphqlWsProtocol::OFFICIAL
+        GraphqlWsProtocol::APOLLO
     }
 
-    pub async fn send(&mut self, client_event: GraphqlWsClientEvent) -> Result<(), Error> {
+    pub async fn send(&mut self, client_event: ApolloGraphqlWsClientEvent) -> Result<(), Error> {
         self.stream.send(Message::binary(build_client_message(client_event)?)).await.expect("failed to send message");
         return Ok(())
     }
@@ -76,7 +76,7 @@ impl GraphqlWsClient {
                         Some(m_str) => {
                             if let Ok(server_msg) = serde_json::from_str(m_str) {
                                 match server_msg {
-                                    GraphqlWsServerEvent::ConnectionAck => {
+                                    ApolloGraphqlWsServerEvent::ConnectionAck => {
                                         // do nothing
                                         println!("Got Connection Ack");
                                         break;
@@ -105,9 +105,9 @@ impl GraphqlWsClient {
 
 pub async fn listen<DF: Future<Output = ()>, EF: Future<Output = bool>, CF: Future<Output = bool>>(
         &mut self,
-        data_handler: impl Fn(GraphqlWsNext) -> DF,
-        error_handler: impl Fn(GraphqlWsError) -> EF,
-        complete_handler: impl Fn(GraphqlWsComplete) -> CF
+        data_handler: impl Fn(ApolloGraphqlWsData) -> DF,
+        error_handler: impl Fn(ApolloGraphqlWsError) -> EF,
+        complete_handler: impl Fn(ApolloGraphqlWsComplete) -> CF
     ) -> Result<(), Error>
     {
         while let Some(msg) = self.stream.next().await {
@@ -121,30 +121,30 @@ pub async fn listen<DF: Future<Output = ()>, EF: Future<Output = bool>, CF: Futu
                         Some(m_str) => {
                             if let Ok(server_msg) = serde_json::from_str(m_str) {
                                 match server_msg {
-                                    GraphqlWsServerEvent::ConnectionAck => {
+                                    ApolloGraphqlWsServerEvent::ConnectionAck => {
                                         // do nothing
                                         println!("Got Connection Ack");
                                         continue;
                                     }
-                                    GraphqlWsServerEvent::Ping => {
+                                    ApolloGraphqlWsServerEvent::ConnectionError => {
                                         // close connection
-                                        println!("Got Ping, sending Pong");
-                                        self.send(GraphqlWsClientEvent::Pong).await?
+                                        println!("Got Connection Error, closing connection");
+                                        self.close().await?
                                     }
-                                    GraphqlWsServerEvent::Pong => {
+                                    ApolloGraphqlWsServerEvent::KeepAlive => {
                                         // do nothing
-                                        println!("Got Pong");
+                                        println!("Got Keep Alive");
                                         continue;
                                     }
-                                    GraphqlWsServerEvent::Next(data_event) => {
+                                    ApolloGraphqlWsServerEvent::Data(data_event) => {
                                         data_handler(data_event).await;
                                     }
-                                    GraphqlWsServerEvent::Error(error_event) => {
+                                    ApolloGraphqlWsServerEvent::Error(error_event) => {
                                         if error_handler(error_event).await {
                                             break;
                                         }
                                     }
-                                    GraphqlWsServerEvent::Complete(complete_event) => {
+                                    ApolloGraphqlWsServerEvent::Complete(complete_event) => {
                                         if complete_handler(complete_event).await {
                                             break;
                                         }
@@ -168,7 +168,7 @@ pub async fn listen<DF: Future<Output = ()>, EF: Future<Output = bool>, CF: Futu
         Ok(())
     }
 
-    pub async fn next(&mut self) -> Result<Option<GraphqlWsServerEvent>, Error>
+    pub async fn next(&mut self) -> Result<Option<ApolloGraphqlWsServerEvent>, Error>
     {
         if let Some(msg) = self.stream.next().await {
             match msg {
@@ -179,7 +179,7 @@ pub async fn listen<DF: Future<Output = ()>, EF: Future<Output = bool>, CF: Futu
                                 Err(Error::default())
                             }
                             Some(m_str) => {
-                                if let Ok(server_msg) = serde_json::from_str::<GraphqlWsServerEvent>(m_str) {
+                                if let Ok(server_msg) = serde_json::from_str::<ApolloGraphqlWsServerEvent>(m_str) {
                                     Ok(Some(server_msg))
                                 }
                                 else {
@@ -202,6 +202,7 @@ pub async fn listen<DF: Future<Output = ()>, EF: Future<Output = bool>, CF: Futu
     }
 
     pub async fn close(&mut self) -> Result<(), Error> {
+        self.send(ApolloGraphqlWsClientEvent::ConnectionTerminate).await.expect("failed to send graphql-ws connection_terminate");
         self.stream.send(Message::close(None)).await.expect("failed to send websocket close");
         Ok(())
     }
