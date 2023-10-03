@@ -103,9 +103,9 @@ impl GraphqlWsClient {
     }
 
 
-pub async fn listen<DF: Future<Output = ()>, EF: Future<Output = bool>, CF: Future<Output = bool>>(
+pub async fn listen<NF: Future<Output = ()>, EF: Future<Output = bool>, CF: Future<Output = bool>>(
         &mut self,
-        data_handler: impl Fn(GraphqlWsNext) -> DF,
+        next_handler: impl Fn(GraphqlWsNext) -> NF,
         error_handler: impl Fn(GraphqlWsError) -> EF,
         complete_handler: impl Fn(GraphqlWsComplete) -> CF
     ) -> Result<(), Error>
@@ -136,8 +136,8 @@ pub async fn listen<DF: Future<Output = ()>, EF: Future<Output = bool>, CF: Futu
                                         println!("Got Pong");
                                         continue;
                                     }
-                                    GraphqlWsServerEvent::Next(data_event) => {
-                                        data_handler(data_event).await;
+                                    GraphqlWsServerEvent::Next(next_event) => {
+                                        next_handler(next_event).await;
                                     }
                                     GraphqlWsServerEvent::Error(error_event) => {
                                         if error_handler(error_event).await {
